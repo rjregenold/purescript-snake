@@ -1,0 +1,7 @@
+{
+  "scripts": {
+    "build": "psc-package update && psc-package build",
+    "bundle": "npm run build && purs bundle output/**/*.js --module Main --main Main -o dist/app.js",
+    "start": "npm run bundle && node dist/app.js"
+  }
+}

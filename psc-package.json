@@ -1,0 +1,14 @@
+{
+    "name": "purescript-snake",
+    "set": "psc-0.11.5",
+    "source": "https://github.com/purescript/package-sets.git",
+    "depends": [
+        "prelude",
+        "console",
+        "canvas",
+        "signal",
+        "random",
+        "integers",
+        "debug"
+    ]
+}
