@@ -9,6 +9,7 @@
         "signal",
         "random",
         "integers",
-        "debug"
+        "debug",
+        "foldable-traversable"
     ]
 }
