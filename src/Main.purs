@@ -6,14 +6,13 @@ import Control.Monad.Eff (Eff)
 import Control.Monad.Eff.Console (CONSOLE, log)
 import Control.Monad.Eff.Random (RANDOM, randomInt)
 import Control.Monad.Eff.Timer (TIMER)
-import Data.Array (deleteAt, elem, length, null, replicate, snoc, tail, (:), (!!), (..))
-import Data.Eq (class Eq, (/=))
+import Data.Array (deleteAt, elem, length, null, snoc, tail, (!!), (..))
 import Data.Foldable (for_)
-import Data.Int (floor, toNumber)
+import Data.Int (toNumber)
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Tuple (Tuple(..))
 import DOM (DOM)
-import Graphics.Canvas
+import Graphics.Canvas (CANVAS, CanvasElement, Context2D, Dimensions, fillRect, getCanvasDimensions, getCanvasElementById, getContext2D, setFillStyle)
 import Signal (Signal, foldp, runSignal, sampleOn, (~>))
 import Signal.DOM (keyPressed)
 import Signal.Time (every, second)
@@ -161,8 +160,8 @@ apple st =
   then st { apple = nextApplePos st.apple }
   else st
 
-input :: forall eff. Eff (dom :: DOM | eff) (Signal ActiveInput)
-input = do
+activeInput :: forall eff. Eff (dom :: DOM | eff) (Signal ActiveInput)
+activeInput = do
   left <- keyPressed leftKeyCode
   up <- keyPressed upKeyCode
   right <- keyPressed rightKeyCode
@@ -186,39 +185,39 @@ render ctx st = do
   drawApple ctx st.apple
   drawPlayer ctx st.player
   where
-    drawBoard ctx = do
-      void $ setFillStyle "black" ctx
-      void $ fillRect ctx { x: 0.0
+    drawBoard ctx' = do
+      void $ setFillStyle "black" ctx'
+      void $ fillRect ctx' { x: 0.0
                           , y: 0.0
                           , w: st.boardDim.width
                           , h: st.boardDim.height 
                           }
 
-    drawApple ctx a = 
+    drawApple ctx' a = 
       case getApplePos a of
         Just (Position pos) -> do
-          void $ setFillStyle "red" ctx
-          void $ fillRect ctx { x: (toNumber pos.x) * gridSize
-                              , y: (toNumber pos.y) * gridSize
-                              , w: pieceSize
-                              , h: pieceSize
-                              }
+          void $ setFillStyle "red" ctx'
+          void $ fillRect ctx' { x: (toNumber pos.x) * gridSize
+                               , y: (toNumber pos.y) * gridSize
+                               , w: pieceSize
+                               , h: pieceSize
+                               }
         Nothing  -> pure unit
 
-    drawPlayer ctx player@{ pos: (Position curPos) } = do
-      void $ setFillStyle "#00cc00" ctx
-      for_ player.trail $ \(Position pos) -> do
-        void $ fillRect ctx { x: (toNumber pos.x) * gridSize
-                            , y: (toNumber pos.y) * gridSize
-                            , w: pieceSize
-                            , h: pieceSize
-                            }
-      void $ setFillStyle playerHeadColor ctx
-      void $ fillRect ctx { x: (toNumber curPos.x) * gridSize
-                          , y: (toNumber curPos.y) * gridSize
-                          , w: pieceSize
-                          , h: pieceSize
-                          }
+    drawPlayer ctx' p@{ pos: (Position curPos) } = do
+      void $ setFillStyle "#00cc00" ctx'
+      for_ p.trail $ \(Position pos) -> do
+        void $ fillRect ctx' { x: (toNumber pos.x) * gridSize
+                             , y: (toNumber pos.y) * gridSize
+                             , w: pieceSize
+                             , h: pieceSize
+                             }
+      void $ setFillStyle playerHeadColor ctx'
+      void $ fillRect ctx' { x: (toNumber curPos.x) * gridSize
+                           , y: (toNumber curPos.y) * gridSize
+                           , w: pieceSize
+                           , h: pieceSize
+                           }
 
     playerHeadColor =
       if st.playState == GameOver
@@ -263,9 +262,9 @@ gameLogic input st =
 
 gameState :: forall e. Dimensions -> Eff (dom :: DOM, random :: RANDOM | e) (Signal GameState)
 gameState dim = do
-  activeInput <- input
+  input <- activeInput
   pool <- shuffle allPos
-  pure (foldp gameLogic (initialGameState pool) (sampleOn frameRate activeInput))
+  pure (foldp gameLogic (initialGameState pool) (sampleOn frameRate input))
   where
     initialGameState pool =
       { boardDim: dim
