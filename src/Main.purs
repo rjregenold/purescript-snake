@@ -6,8 +6,8 @@ import Control.Monad.Eff (Eff)
 import Control.Monad.Eff.Console (CONSOLE, log)
 import Control.Monad.Eff.Random (RANDOM, randomInt)
 import Control.Monad.Eff.Timer (TIMER)
-import Data.Array (deleteAt, elem, length, null, snoc, tail, (!!), (..))
-import Data.Foldable (for_)
+import Data.Array (deleteAt, elem, length, null, replicate, snoc, tail, (!!), (..))
+import Data.Foldable (foldr, for_)
 import Data.Int (toNumber)
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Tuple (Tuple(..))
@@ -144,22 +144,37 @@ player = checkGameOver <<< updatePlayer
       then st { playState = GameOver }
       else st
 
+-- | Gets the position of an apple
 getApplePos :: Apple -> Maybe Position
 getApplePos a = a.pool !! a.idx
 
-nextApplePos :: Apple -> Apple
-nextApplePos a =
-  let idx' = a.idx + 1
-  in  if idx' >= length a.pool
-      then a { idx = 0 }
-      else a { idx = idx' }
+-- | Gets the next apple position
+nextApplePos :: Player -> Apple -> Apple
+nextApplePos p = checkPlacement p <<< moveNext
+  where
+    moveNext a' = 
+      let idx = a'.idx + 1
+      in  if idx >= length a'.pool
+          then a' { idx = 0 }
+          else a' { idx = idx }
 
+    -- make sure we are not placing the apple under the player
+    checkPlacement p' a' = 
+      case getApplePos a' of
+        Just pos -> 
+          if pos == p'.pos || pos `elem` p'.trail
+          then nextApplePos p' a'
+          else a'
+        Nothing -> a'
+
+-- | Handles the apple logic.
 apple :: GameState -> GameState
 apple st = 
   if st.eating
-  then st { apple = nextApplePos st.apple }
+  then st { apple = nextApplePos st.player st.apple }
   else st
 
+-- | Inits the input signal.
 activeInput :: forall eff. Eff (dom :: DOM | eff) (Signal ActiveInput)
 activeInput = do
   left <- keyPressed leftKeyCode
@@ -179,6 +194,7 @@ activeInput = do
     toInput _ _ _ true = Down
     toInput _ _ _ _    = None
 
+-- | Renders the game state.
 render :: forall e. Context2D -> GameState -> Eff (canvas :: CANVAS | e) Unit
 render ctx st = do
   drawBoard ctx
@@ -188,10 +204,10 @@ render ctx st = do
     drawBoard ctx' = do
       void $ setFillStyle "black" ctx'
       void $ fillRect ctx' { x: 0.0
-                          , y: 0.0
-                          , w: st.boardDim.width
-                          , h: st.boardDim.height 
-                          }
+                           , y: 0.0
+                           , w: st.boardDim.width
+                           , h: st.boardDim.height 
+                           }
 
     drawApple ctx' a = 
       case getApplePos a of
@@ -224,12 +240,14 @@ render ctx st = do
       then "#ffa500"
       else "#00ff00"
 
+-- | Returns a collection of all possible game positions.
 allPos :: Array Position
 allPos = do
   x <- 0..(tileCount - 1)
   y <- 0..(tileCount - 1)
   pure (Position { x: x, y: y })
 
+-- | Shuffles a collection using the Fisher-Yates shuffle.
 shuffle :: forall a e. Array a -> Eff (random :: RANDOM | e) (Array a)
 shuffle = go <<< Tuple []
   where
@@ -242,41 +260,58 @@ shuffle = go <<< Tuple []
 
     f acc x = Tuple (snoc acc x)
 
+-- | Given the current GameState, determines if the player is eating an apple.
 eating :: GameState -> GameState
 eating st = st { eating = maybe false (intersects st.player.pos) (getApplePos st.apple) }
 
+-- | Updates the GameState with the current input.
 updateInput :: ActiveInput -> GameState -> GameState
 updateInput input st = st { input = input }
 
+-- | Changes the play state to Playing.
+startPlaying :: GameState -> GameState
+startPlaying st = st { playState = Playing }
+
+-- | Executes the game logic to produce the next game state.
 gameLogic :: ActiveInput -> GameState -> GameState
 gameLogic input st = 
   case st.playState of
     NotStarted ->
       if input /= None
-      then updateInput input (st { playState = Playing })
+      then (step <<< startPlaying) st
       else st
     Playing ->
-      (player <<< apple <<< eating <<< updateInput input) st
+      step st
     GameOver -> 
       st
+  where
+    -- calculates the next step of the game state
+    step = player <<< apple <<< eating <<< updateInput input
 
+-- | Inits the game state signal.
 gameState :: forall e. Dimensions -> Eff (dom :: DOM, random :: RANDOM | e) (Signal GameState)
 gameState dim = do
   input <- activeInput
-  pool <- shuffle allPos
-  pure (foldp gameLogic (initialGameState pool) (sampleOn frameRate input))
+  pool <- shuffleTimes 10 allPos
+  let p = initialPlayer
+      -- creates an apple and sets its position
+      a  = nextApplePos p { pool: pool, idx: 0 }
+  pure (foldp gameLogic (initialGameState a p) (sampleOn frameRate input))
   where
-    initialGameState pool =
+    initialGameState a p =
       { boardDim: dim
       , input: None
-      , player: initialPlayer
-      , apple: { pool: pool
-               , idx: 0 
-               } 
+      , player: p
+      , apple: a 
       , eating: false
       , playState: NotStarted
       }
 
+    -- executes the shuffle function n times.
+    shuffleTimes :: forall e2. Int -> Array Position -> Eff (random :: RANDOM | e2) (Array Position)
+    shuffleTimes n = foldr (<=<) pure (replicate n shuffle)
+
+-- | Runs the game.
 runGame :: forall e. CanvasElement -> Eff (AppEff e) Unit
 runGame canvas = do
   log "starting game"
