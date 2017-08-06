@@ -3,7 +3,8 @@ module Main where
 import Prelude
 
 import Control.Monad.Eff (Eff)
-import Control.Monad.Eff.Console (CONSOLE, log)
+import Control.Monad.Eff.Console (CONSOLE)
+import Control.Monad.Eff.Console as Console
 import Control.Monad.Eff.Random (RANDOM, randomInt)
 import Control.Monad.Eff.Timer (TIMER)
 import Data.Array (deleteAt, elem, length, null, replicate, snoc, tail, (!!), (..))
@@ -12,21 +13,26 @@ import Data.Int (toNumber)
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Tuple (Tuple(..))
 import DOM (DOM)
-import Graphics.Canvas (CANVAS, CanvasElement, Context2D, Dimensions, fillRect, fillText, getCanvasDimensions, getCanvasElementById
-                       , getContext2D, measureText, setFillStyle, setFont)
+import Graphics.Canvas (CANVAS, CanvasElement, Context2D, Dimensions)
+import Graphics.Canvas as Canvas
 import Signal (Signal, foldp, runSignal, sampleOn, (~>))
 import Signal.DOM (keyPressed)
 import Signal.Time (every, second)
 
-gridSize :: Number
-gridSize = 20.0
 
-pieceSize :: Number
-pieceSize = gridSize - 2.0
-
+-- | The number of tiles on the game board.
 tileCount :: Int
 tileCount = 20
 
+-- | The pixel size of each tile on the game board.
+tileSize :: Number
+tileSize = 20.0
+
+-- | The size of a piece on the game board.
+pieceSize :: Number
+pieceSize = tileSize - 2.0
+
+-- | A position on the game board.
 data Position = Position
   { x :: Int
   , y :: Int
@@ -35,11 +41,13 @@ data Position = Position
 instance eqPosition :: Eq Position where
   eq (Position a) (Position b) = a.x == b.x && a.y == b.y
 
+-- | Velocity type.
 data Velocity = Velocity
   { x :: Int
   , y :: Int
   }
 
+-- | The player.
 type Player =
   { pos   :: Position
   , vel   :: Velocity
@@ -48,6 +56,7 @@ type Player =
   , trail :: Array Position
   }
 
+-- | Initial state for the player.
 initialPlayer :: Player
 initialPlayer =
   { pos: Position { x: (tileCount / 2), y: (tileCount / 2) }
@@ -57,11 +66,15 @@ initialPlayer =
   , trail: []
   }
 
+-- | The apple. It contains a pool which should be a shuffled Array of all valid 
+-- | positions and an index which points to the current apple position in the
+-- | pool.
 type Apple =
   { pool :: Array Position
   , idx  :: Int
   }
 
+-- | The valid inputs for the game.
 data ActiveInput
   = None
   | LeftArrow
@@ -71,6 +84,7 @@ data ActiveInput
 
 derive instance eqActiveInput :: Eq ActiveInput
 
+-- | The valid directions for the game.
 data Direction
   = DirLeft
   | DirRight
@@ -79,6 +93,7 @@ data Direction
 
 derive instance eqDirection :: Eq Direction
 
+-- | The valid states for the game.
 data PlayState
   = NotStarted
   | Playing
@@ -86,6 +101,7 @@ data PlayState
 
 derive instance eqPlayState :: Eq PlayState
 
+-- | The game state.
 type GameState =
   { boardDim  :: Dimensions
   , input     :: ActiveInput
@@ -95,6 +111,7 @@ type GameState =
   , playState :: PlayState
   }
 
+-- | The effects needed for this app.
 type AppEff eff =
   ( console :: CONSOLE
   , canvas  :: CANVAS
@@ -103,6 +120,21 @@ type AppEff eff =
   , random  :: RANDOM
   | eff
   )
+
+-- | Alias for color.
+type Color = String
+
+-- | The player trail color.
+playerTrailColor :: Color
+playerTrailColor = "#00cc00"
+
+-- | The player head color during normal gameplay.
+playerHeadColor :: Color
+playerHeadColor = "#00ff00"
+
+-- | The player head color when the game is over.
+playerHeadColorFail :: Color
+playerHeadColorFail = "#ffa500"
 
 -- | Defines the frame rate signal.
 frameRate :: Signal Number
@@ -127,9 +159,35 @@ wrapPos :: Int -> Int -> Int -> Int -> Position -> Position
 wrapPos mnx mxx mny mxy (Position p) = 
   Position { x: wrap mnx mxx p.x, y: wrap mny mxy p.y }
 
+-- | Returns a collection of all possible game positions.
+allPos :: Array Position
+allPos = do
+  x <- 0..(tileCount - 1)
+  y <- 0..(tileCount - 1)
+  pure (Position { x: x, y: y })
+
+-- | Shuffles a collection using the Fisher-Yates shuffle.
+shuffle :: forall a e. Array a -> Eff (random :: RANDOM | e) (Array a)
+shuffle = go <<< Tuple []
+  where
+    go (Tuple acc xs) =
+      if null xs
+      then pure acc
+      else do
+        idx <- randomInt 0 (length xs - 1)
+        go (fromMaybe (Tuple [] []) (f acc <$> xs !! idx <*> deleteAt idx xs))
+
+    f acc x = Tuple (snoc acc x)
+
 -- | Gets the next player step from the current game state.
 playerLogic :: GameState -> Player
-playerLogic st = (wrapPlayer <<< playerVelocity <<< trimTrail <<< addTrail <<< eat st.eating <<< move st.input) st.player
+playerLogic st = 
+  (wrapPlayer 
+   <<< playerVelocity 
+   <<< trimTrail 
+   <<< addTrail 
+   <<< eat st.eating 
+   <<< move st.input) st.player
   where
     -- move checks the previous direction to ensure the player does not
     -- turn back onto themselves (thus ending the game)
@@ -222,95 +280,6 @@ activeInput = do
     toInput _ _ _ true = DownArrow
     toInput _ _ _ _    = None
 
--- | Renders the game state.
-render :: forall e. Context2D -> GameState -> Eff (canvas :: CANVAS | e) Unit
-render ctx st = do
-  renderGame
-  renderOverlay
-  where
-    renderGame = do
-      renderBoard
-      renderApple st.apple
-      renderPlayer st.player
-
-    renderBoard = do
-      void $ setFillStyle "black" ctx
-      void $ fillRect ctx { x: 0.0
-                          , y: 0.0
-                          , w: st.boardDim.width
-                          , h: st.boardDim.height 
-                          }
-
-    renderApple a =
-      case getApplePos a of
-        Just pos -> renderTile "red" pos
-        Nothing  -> pure unit
-
-    renderPlayer p = do
-      renderTrail p.trail
-      renderHead p.pos
-
-    renderTrail ts = for_ ts (renderTile playerTrailColor)
-
-    renderHead = renderTile playerHeadColor
-
-    renderTile color (Position pos) = do
-      void $ setFillStyle color ctx
-      void $ fillRect ctx { x: (toNumber pos.x) * gridSize
-                          , y: (toNumber pos.y) * gridSize
-                          , w: pieceSize
-                          , h: pieceSize
-                          }
-
-    playerTrailColor = "#00cc00"
-
-    playerHeadColor =
-      if st.playState == GameOver
-      then "#ffa500"
-      else "#00ff00"
-
-    renderOverlay = 
-      case st.playState of
-        NotStarted -> renderNotStarted
-        GameOver   -> renderGameOver
-        _          -> pure unit
-
-    renderNotStarted = 
-      let msg = "Press the arrow keys to start"
-      in do
-        void $ setFont "20px sans-serif" ctx
-        m <- measureText ctx msg
-        void $ setFillStyle "white" ctx
-        void $ fillText ctx msg ((st.boardDim.width - m.width) / 2.0) 40.0
-
-    renderGameOver = 
-      let msg = "GAME OVER :("
-      in do
-        void $ setFont "20px sans-serif" ctx
-        m <- measureText ctx msg
-        void $ setFillStyle "white" ctx
-        void $ fillText ctx msg ((st.boardDim.width - m.width) / 2.0) 40.0
-
--- | Returns a collection of all possible game positions.
-allPos :: Array Position
-allPos = do
-  x <- 0..(tileCount - 1)
-  y <- 0..(tileCount - 1)
-  pure (Position { x: x, y: y })
-
--- | Shuffles a collection using the Fisher-Yates shuffle.
-shuffle :: forall a e. Array a -> Eff (random :: RANDOM | e) (Array a)
-shuffle = go <<< Tuple []
-  where
-    go (Tuple acc xs) =
-      if null xs
-      then pure acc
-      else do
-        idx <- randomInt 0 (length xs - 1)
-        go (fromMaybe (Tuple [] []) (f acc <$> xs !! idx <*> deleteAt idx xs))
-
-    f acc x = Tuple (snoc acc x)
-
 -- | Given the current GameState, determines if the player is eating an apple.
 eating :: GameState -> GameState
 eating st = st { eating = maybe false (intersects st.player.pos) (getApplePos st.apple) }
@@ -362,17 +331,77 @@ gameState dim = do
     shuffleTimes :: forall e2. Int -> Array Position -> Eff (random :: RANDOM | e2) (Array Position)
     shuffleTimes n = foldr (<=<) pure (replicate n shuffle)
 
+-- | Renders the game state.
+render :: forall e. Context2D -> GameState -> Eff (canvas :: CANVAS | e) Unit
+render ctx st = do
+  renderGame
+  renderOverlay
+  where
+    renderGame = do
+      renderBoard
+      renderApple st.apple
+      renderPlayer st.player
+
+    renderBoard = do
+      void $ Canvas.setFillStyle "black" ctx
+      void $ Canvas.fillRect ctx { x: 0.0
+                                 , y: 0.0
+                                 , w: st.boardDim.width
+                                 , h: st.boardDim.height 
+                                 }
+
+    renderApple a =
+      case getApplePos a of
+        Just pos -> renderTile "red" pos
+        Nothing  -> pure unit
+
+    renderPlayer p = do
+      renderTrail p.trail
+      renderHead p.pos
+
+    renderTrail ts = for_ ts (renderTile playerTrailColor)
+
+    renderHead = renderTile headColor
+
+    renderTile color (Position pos) = do
+      void $ Canvas.setFillStyle color ctx
+      void $ Canvas.fillRect ctx { x: (toNumber pos.x) * tileSize
+                                 , y: (toNumber pos.y) * tileSize
+                                 , w: pieceSize
+                                 , h: pieceSize
+                                 }
+
+    headColor =
+      if st.playState == GameOver
+      then playerHeadColorFail
+      else playerHeadColor
+
+    renderOverlay = 
+      case st.playState of
+        NotStarted -> renderNotStarted
+        GameOver   -> renderGameOver
+        _          -> pure unit
+
+    renderMsg msg = do
+      void $ Canvas.setFont "20px sans-serif" ctx
+      m <- Canvas.measureText ctx msg
+      void $ Canvas.setFillStyle "white" ctx
+      void $ Canvas.fillText ctx msg ((st.boardDim.width - m.width) / 2.0) 40.0
+
+    renderNotStarted = renderMsg "Press the arrow keys to start"
+
+    renderGameOver = renderMsg "GAME OVER :("
+
 -- | Runs the game.
 runGame :: forall e. CanvasElement -> Eff (AppEff e) Unit
 runGame canvas = do
-  log "starting game"
-  dim <- getCanvasDimensions canvas
-  ctx <- getContext2D canvas
+  dim <- Canvas.getCanvasDimensions canvas
+  ctx <- Canvas.getContext2D canvas
   game <- gameState dim
   runSignal (game ~> render ctx)
 
+-- | Entrypoint for the game.
 main :: forall e. Eff (AppEff e) Unit
 main = do
-  mCanvas <- getCanvasElementById "app"
-  log "in main"
-  maybe (log "missing canvas") runGame mCanvas
+  mCanvas <- Canvas.getCanvasElementById "app"
+  maybe (Console.error "missing canvas") runGame mCanvas
