@@ -42,6 +42,7 @@ data Velocity = Velocity
 type Player =
   { pos   :: Position
   , vel   :: Velocity
+  , dir   :: Maybe Direction
   , len   :: Int
   , trail :: Array Position
   }
@@ -50,6 +51,7 @@ initialPlayer :: Player
 initialPlayer =
   { pos: Position { x: 10, y: 10 }
   , vel: Velocity { x: 0, y: 0 }
+  , dir: Nothing
   , len: 3
   , trail: []
   }
@@ -61,12 +63,20 @@ type Apple =
 
 data ActiveInput
   = None
-  | Left
-  | Up
-  | Right
-  | Down
+  | LeftArrow
+  | UpArrow
+  | RightArrow
+  | DownArrow
 
 derive instance eqActiveInput :: Eq ActiveInput
+
+data Direction
+  = DirLeft
+  | DirRight
+  | DirUp
+  | DirDown
+
+derive instance eqDirection :: Eq Direction
 
 data PlayState
   = NotStarted
@@ -114,11 +124,21 @@ wrapPos mnx mxx mny mxy (Position p) =
 playerLogic :: GameState -> Player
 playerLogic st = (wrapPlayer <<< playerVelocity <<< trimTrail <<< addTrail <<< eat st.eating <<< move st.input) st.player
   where
+    -- move checks the previous position to ensure the player does not
+    -- turn back onto themselves (thus ending the game)
     move None p  = p
-    move Left p  = p { vel = Velocity { x: -1, y: 0 } }
-    move Up p    = p { vel = Velocity { x: 0, y: -1 } }
-    move Right p = p { vel = Velocity { x: 1, y: 0 } }
-    move Down p  = p { vel = Velocity { x: 0, y: 1 } }
+
+    move LeftArrow p | p.dir == (Just DirRight) = p
+                     | otherwise = p { vel = Velocity { x: -1, y: 0 }, dir = Just DirLeft }
+
+    move UpArrow p | p.dir == (Just DirDown) = p
+                   | otherwise = p { vel = Velocity { x: 0, y: -1 }, dir = Just DirUp }
+
+    move RightArrow p | p.dir == (Just DirLeft) = p
+                      | otherwise = p { vel = Velocity { x: 1, y: 0 }, dir = Just DirRight }
+
+    move DownArrow p | p.dir == (Just DirUp) = p
+                     | otherwise = p { vel = Velocity { x: 0, y: 1 }, dir = Just DirDown }
 
     eat e p =
       if e
@@ -175,7 +195,7 @@ apple st =
   else st
 
 -- | Inits the input signal.
-activeInput :: forall eff. Eff (dom :: DOM | eff) (Signal ActiveInput)
+activeInput :: forall e. Eff (dom :: DOM | e) (Signal ActiveInput)
 activeInput = do
   left <- keyPressed leftKeyCode
   up <- keyPressed upKeyCode
@@ -188,10 +208,10 @@ activeInput = do
     rightKeyCode = 39
     downKeyCode  = 40
 
-    toInput true _ _ _ = Left
-    toInput _ true _ _ = Up
-    toInput _ _ true _ = Right
-    toInput _ _ _ true = Down
+    toInput true _ _ _ = LeftArrow
+    toInput _ true _ _ = UpArrow
+    toInput _ _ true _ = RightArrow
+    toInput _ _ _ true = DownArrow
     toInput _ _ _ _    = None
 
 -- | Renders the game state.
