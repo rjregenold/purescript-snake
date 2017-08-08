@@ -108,6 +108,7 @@ type GameState =
   , player    :: Player
   , apple     :: Apple
   , eating    :: Boolean
+  , score     :: Int
   , playState :: PlayState
   }
 
@@ -280,13 +281,20 @@ activeInput = do
     toInput _ _ _ true = DownArrow
     toInput _ _ _ _    = None
 
+-- | Updates the GameState with the current input.
+updateInput :: ActiveInput -> GameState -> GameState
+updateInput input st = st { input = input }
+
 -- | Given the current GameState, determines if the player is eating an apple.
 eating :: GameState -> GameState
 eating st = st { eating = maybe false (intersects st.player.pos) (getApplePos st.apple) }
 
--- | Updates the GameState with the current input.
-updateInput :: ActiveInput -> GameState -> GameState
-updateInput input st = st { input = input }
+-- | Updates the score if a player is eating.
+score :: GameState -> GameState
+score st =
+  if st.eating
+  then st { score = st.score + 1 }
+  else st
 
 -- | Changes the play state to Playing.
 startPlaying :: GameState -> GameState
@@ -306,7 +314,7 @@ gameLogic input st =
       st
   where
     -- calculates the next step of the game state
-    step = player <<< apple <<< eating <<< updateInput input
+    step = player <<< apple <<< score <<< eating <<< updateInput input
 
 -- | Inits the game state signal.
 gameState :: forall e. Dimensions -> Eff (dom :: DOM, random :: RANDOM | e) (Signal GameState)
@@ -324,6 +332,7 @@ gameState dim = do
       , player: p
       , apple: a 
       , eating: false
+      , score: 0
       , playState: NotStarted
       }
 
@@ -376,7 +385,9 @@ render ctx st = do
       then playerHeadColorFail
       else playerHeadColor
 
-    renderOverlay = 
+    renderOverlay = do
+      -- always show the score
+      renderScore
       case st.playState of
         NotStarted -> renderNotStarted
         GameOver   -> renderGameOver
@@ -389,6 +400,12 @@ render ctx st = do
       void $ Canvas.fillText ctx msg ((st.boardDim.width - m.width) / 2.0) 40.0
 
     renderNotStarted = renderMsg "Press the arrow keys to start"
+
+    renderScore = do
+      let msg = "Score: " <> (show st.score)
+      void $ Canvas.setFont "12px sans-serif" ctx
+      void $ Canvas.setFillStyle "white" ctx
+      void $ Canvas.fillText ctx msg 10.0 (st.boardDim.height - 22.0)
 
     renderGameOver = renderMsg "GAME OVER :("
 
